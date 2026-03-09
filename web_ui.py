@@ -1,11 +1,13 @@
 # web_ui.py
 from flask import Flask, Response, render_template_string
+from typing import List, Dict
 import io
 import contextlib
 import os
 import subprocess
 import random
-from typing import List, Dict
+import sys
+import base64, json, urllib.parse
 
 # ---------------- CONFIG ----------------
 REPO_URL = "https://github.com/Epodonios/v2ray-configs.git"
@@ -18,14 +20,28 @@ SCHEME = "vmess://"
 
 app = Flask(__name__)
 
+class Tee:
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for stream in self.streams:
+            stream.write(data)
+            stream.flush()
+
+    def flush(self):
+        for stream in self.streams:
+            stream.flush()
+
+
 def run_command(command, cwd=None):
     result = subprocess.run(
-        command,
-        cwd=cwd,
-        shell=True,
-        capture_output=True,
-        text=True
-    )
+            command,
+            cwd=cwd,
+            shell=True,
+            capture_output=True,
+            text=True
+            )
     print(command, cwd)
     print("Output:", result.stdout)
     if result.returncode != 0:
@@ -69,6 +85,24 @@ def group_by_first_4_after_scheme(lines: List[str]) -> Dict[str, List[str]]:
 
     return groups
 
+def decode_vmess(uri: str) -> dict:
+    try:
+        assert uri.startswith("vmess://")
+        b64 = uri[len("vmess://"):]
+        # some implementations use URL-safe base64 or omit padding
+        b64 = b64.replace('-', '+').replace('_', '/')
+        # pad
+        padding = (-len(b64)) % 4
+        b64 += "=" * padding
+        raw = base64.b64decode(b64)
+        try:
+            j = json.loads(raw.decode('utf-8'))
+            return j
+        except Exception:
+            return None
+    except Exception as e:   
+        return None
+
 def pick_random_unique_groups(count: int = 15):
     file_path = os.path.join(LOCAL_REPO_PATH, TARGET_SUBDIR, FILENAME)
 
@@ -84,37 +118,176 @@ def pick_random_unique_groups(count: int = 15):
     random.shuffle(group_keys)
 
     for key in group_keys:
-        if len(selected) >= count:
-            break
-        selected.append(random.choice(groups[key]))
+        group_size = len(groups[key])
+        
+        if group_size < 5:
+            continue
+        thresholds = [
+            (10, 1),
+            (50, 2),
+            (100, 3),
+            (300, 5),
+        ]
+        
+        num_to_add = sum(amount for limit, amount in thresholds if group_size > limit)
+        
+        for _ in range(num_to_add):
+            if len(selected) >= count:
+                break
+            checkLine = random.choice(groups[key])
+            dLine = decode_vmess(checkLine)
+            if dLine == None:
+                continue
+            selected.append(checkLine)
 
+        
     return selected
 
 # Simple HTML template — print captured output and the selected lines
 HTML = """
 <!doctype html>
 <html>
-  <head>
-    <meta charset="utf-8" />
-    <title>Momo for Babak</title>
-    <style>
-      body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; margin: 20px; }
-      pre { background: #f6f8fa; padding: 12px; border-radius: 6px; overflow: auto; }
-      .error { color: darkred; font-weight: bold; }
-    </style>
-  </head>
-  <body>
-    <h1>List of vmess</h1>
-    {% if error %}
-      <div class="error">Error: {{ error }}</div>
-    {% endif %}
+<head>
+  <meta charset="utf-8" />
+  <title>Momo for Babak</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
 
-<pre><code>
-{% for line in selected -%}
-{{ loop.index }}. {{ line | e }}
-{% endfor -%}
-</code></pre>
-  </body>
+  <style>
+    :root{
+      --bg:#f6f8fa;
+      --muted:#6b7280;
+      --accent:#0ea5a4;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial;
+      margin: 20px;
+      color:#111827;
+    }
+
+    header {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:16px;
+    }
+
+    h1{ font-size:1.25rem; margin:0; }
+
+    .meta{
+      color:var(--muted);
+      font-size:0.95rem;
+    }
+
+    .error {
+      color: darkred;
+      font-weight: 600;
+      margin-bottom:12px;
+    }
+
+    .list-box {
+      background:var(--bg);
+      padding:12px;
+      border-radius:8px;
+      font-family: monospace;
+    }
+
+    .line-row {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding:6px 8px;
+      border-radius:6px;
+      margin-bottom:4px;
+    }
+
+    .line-row:nth-child(odd){
+      background:rgba(0,0,0,0.02);
+    }
+
+    .line-text {
+      flex:1;
+      word-break:break-all;
+    }
+
+    button {
+      background:var(--accent);
+      color:white;
+      border:0;
+      padding:6px 10px;
+      border-radius:6px;
+      cursor:pointer;
+      font-weight:600;
+      font-size:0.85rem;
+    }
+
+    button:active{
+      transform:translateY(1px);
+    }
+
+    @media (max-width:520px){
+      body{margin:12px}
+      header{flex-direction:column;align-items:flex-start}
+    }
+  </style>
+</head>
+
+<body>
+
+<header>
+  <div>
+    <h1>List of vmess</h1>
+    <div class="meta">
+      Selected: <strong>{{ selected|length }}</strong> lines
+    </div>
+  </div>
+</header>
+
+{% if error %}
+  <div class="error">Error: {{ error }}</div>
+{% endif %}
+
+<h2 style="margin:12px 0 8px 0; font-size:1rem;">Selected lines</h2>
+
+<div class="list-box" id="selectedBox">
+  {% for line in selected -%}
+  <div class="line-row">
+    <span class="line-text">{{ line | e }}</span>
+    <button class="copy-btn">Copy</button>
+  </div>
+  {% endfor -%}
+</div>
+
+<script>
+  document.getElementById('selectedBox').addEventListener('click', async function(e) {
+
+    if (!e.target.classList.contains('copy-btn')) return;
+
+    const row = e.target.closest('.line-row');
+    const text = row.querySelector('.line-text').innerText.trim();
+
+    try {
+      await navigator.clipboard.writeText(text);
+
+      const originalText = e.target.textContent;
+      e.target.textContent = "Copied ✓";
+      e.target.disabled = true;
+
+      setTimeout(() => {
+        e.target.textContent = originalText;
+        e.target.disabled = false;
+      }, 1200);
+
+    } catch (err) {
+      alert("Clipboard copy failed. Make sure you are using HTTPS or localhost.");
+    }
+
+  });
+</script>
+
+</body>
 </html>
 """
 
@@ -126,13 +299,14 @@ def index():
 
     # capture all prints from the functions so they show up in the web UI
     try:
-        with contextlib.redirect_stdout(buf):
+        tee = Tee(sys.stdout, buf)
+        with contextlib.redirect_stdout(tee):
             clone_or_pull_repo()
             list_files_in_repo()
             selected = pick_random_unique_groups(15)
     except Exception as e:
-        # capture exception info in stdout as well
-        with contextlib.redirect_stdout(buf):
+        tee = Tee(sys.stdout, buf)
+        with contextlib.redirect_stdout(tee):
             print("Exception while running:", e)
         error_msg = str(e)
 
