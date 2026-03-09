@@ -157,6 +157,8 @@ HTML = """
       --bg:#f6f8fa;
       --muted:#6b7280;
       --accent:#0ea5a4;
+      --success-bg:#dcfce7;
+      --success-text:#166534;
     }
 
     body {
@@ -201,10 +203,17 @@ HTML = """
       padding:6px 8px;
       border-radius:6px;
       margin-bottom:4px;
+      transition: background 0.3s ease;
     }
 
     .line-row:nth-child(odd){
       background:rgba(0,0,0,0.02);
+    }
+
+    /* Highlight copied line */
+    .line-row.copied {
+      background: var(--success-bg);
+      color: var(--success-text);
     }
 
     .line-text {
@@ -223,8 +232,8 @@ HTML = """
       font-size:0.85rem;
     }
 
-    button:active{
-      transform:translateY(1px);
+    button.copied-btn {
+      background: var(--success-text);
     }
 
     @media (max-width:520px){
@@ -271,17 +280,15 @@ HTML = """
     try {
       await navigator.clipboard.writeText(text);
 
-      const originalText = e.target.textContent;
+      // Change button text permanently
       e.target.textContent = "Copied ✓";
-      e.target.disabled = true;
+      e.target.classList.add("copied-btn");
 
-      setTimeout(() => {
-        e.target.textContent = originalText;
-        e.target.disabled = false;
-      }, 1200);
+      // Highlight copied line
+      row.classList.add("copied");
 
     } catch (err) {
-      alert("Clipboard copy failed. Make sure you are using HTTPS or localhost.");
+      alert("Clipboard copy failed. Use HTTPS or localhost.");
     }
 
   });
