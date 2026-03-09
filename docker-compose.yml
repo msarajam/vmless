@@ -1,0 +1,13 @@
+version: "3.8"
+services:
+  web:
+    build: .
+    ports:
+      - "9090:9090"
+    volumes:
+      # persist or share local vpn_repo so it survives container rebuilds
+      - ./vpn_repo:/app/vpn_repo
+    environment:
+      # Example envs you might want to expose
+      # REPO_URL: "https://github.com/Epodonios/v2ray-configs.git"
+    restart: unless-stopped
