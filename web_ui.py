@@ -14,6 +14,8 @@ import json
 import re
 import uuid
 import ipaddress
+import time
+import threading
 from urllib.parse import urlparse, parse_qs, unquote
 
 # ---------------- CONFIG ----------------
@@ -23,6 +25,10 @@ LOCAL_REPO_PATH = "./vpn_repo"
 DOMAIN_RE = re.compile(
     r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(?:\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*\.?$"
 )
+_cooldown_seconds = 500  # change to whatever
+_lock = threading.Lock()
+_last_clone = 0.0
+
 # ----------------------------------------
 
 app = Flask(__name__)
@@ -75,6 +81,9 @@ def remove_duplicates():
         bb_lines = set(line.strip() for line in f)
     
     # Keep only lines not in FileBB
+    if not os.path.exists("SubAll.txt"):
+        print("SubAll.txt not found, skipping duplicate removal.")
+        return
     with open("SubAll.txt", "r", encoding="utf-8") as f:
         aa_lines = f.readlines()
     
@@ -82,17 +91,29 @@ def remove_duplicates():
         line for line in aa_lines
         if line.strip() not in bb_lines
     ]
-    
     print(f"Removed {len(aa_lines) - len(filtered_lines)} duplicates, {len(filtered_lines)} lines remain.")
     if (len(aa_lines) - len(filtered_lines)) > (len(filtered_lines)/2):
         # remove SubDone.txt
         os.remove("SubDone.txt")
-        
     # Overwrite FileAA
     with open("SubAll.txt", "w", encoding="utf-8") as f:
         f.writelines(filtered_lines)
 
+
+def can_clone():
+    global _last_clone
+    with _lock:
+        now = time.time()
+        if now - _last_clone >= _cooldown_seconds:
+            _last_clone = now
+            return True
+        return False
+
 def clone_or_pull_repo():
+    if not can_clone():
+        print("Rate limited. Try again later.")
+        return {"status": "error", "message": f"Rate limited. Try again in {int(_cooldown_seconds - (time.time()-_last_clone))}s"}
+    # validate repo_url carefully before running git clone (see notes)
     if not os.path.exists(LOCAL_REPO_PATH):
         run_command(f"git clone --depth 1 -b {BRANCH} {REPO_URL} {LOCAL_REPO_PATH}")
     else:
@@ -100,7 +121,6 @@ def clone_or_pull_repo():
         run_command(f"git checkout {BRANCH}", cwd=LOCAL_REPO_PATH)
         run_command("git pull", cwd=LOCAL_REPO_PATH)
     combineAll()
-    remove_duplicates()
 
 def read_lines(path: str) -> List[str]:
     with open(path, "r", encoding="utf-8") as f:
@@ -260,7 +280,7 @@ def pick_random_unique_groups(filename: str ="",scheme: str ="",  count: int = 1
 
 @app.route("/")
 def index():
-    clone_or_pull_repo()
+    remove_duplicates()
 
     buf = io.StringIO()
     vmess = []
@@ -320,4 +340,5 @@ def index():
     return render_template("index.html", stdout=stdout_contents, vmess=vmess , vless=vless, trojan=trojan, error=error_msg)
 
 if __name__ == "__main__":
+    clone_or_pull_repo()   
     app.run(host="0.0.0.0", port=9090, debug=True)
