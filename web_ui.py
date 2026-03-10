@@ -83,6 +83,11 @@ def remove_duplicates():
         if line.strip() not in bb_lines
     ]
     
+    print(f"Removed {len(aa_lines) - len(filtered_lines)} duplicates, {len(filtered_lines)} lines remain.")
+    if (len(aa_lines) - len(filtered_lines)) > (len(filtered_lines)/2):
+        # remove SubDone.txt
+        os.remove("SubDone.txt")
+        
     # Overwrite FileAA
     with open("SubAll.txt", "w", encoding="utf-8") as f:
         f.writelines(filtered_lines)
