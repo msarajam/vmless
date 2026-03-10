@@ -116,6 +116,10 @@ def clone_or_pull_repo():
     # validate repo_url carefully before running git clone (see notes)
     if not os.path.exists(LOCAL_REPO_PATH):
         run_command(f"git clone --depth 1 -b {BRANCH} {REPO_URL} {LOCAL_REPO_PATH}")
+        #remove SubAll.txt if exist
+        sub_all_path = os.path.join( "SubAll.txt")
+        if os.path.exists(sub_all_path):
+            os.remove(sub_all_path)
     else:
         run_command("git fetch", cwd=LOCAL_REPO_PATH)
         run_command(f"git checkout {BRANCH}", cwd=LOCAL_REPO_PATH)
