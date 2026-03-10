@@ -280,6 +280,7 @@ def pick_random_unique_groups(filename: str ="",scheme: str ="",  count: int = 1
 
 @app.route("/")
 def index():
+    clone_or_pull_repo()   
     remove_duplicates()
 
     buf = io.StringIO()
