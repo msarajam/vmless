@@ -1,0 +1,196 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Momo V2Ray protocol subscriptions</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+  <style>
+    :root{
+      --bg:#f6f8fa;
+      --muted:#6b7280;
+      --accent:#0ea5a4;
+      --success-bg:#dcfce7;
+      --success-text:#166534;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial;
+      margin: 20px;
+      color:#111827;
+    }
+
+    header {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:16px;
+    }
+
+    h1{ font-size:1.25rem; margin:0; }
+
+    .meta{
+      color:var(--muted);
+      font-size:0.95rem;
+    }
+
+    .error {
+      color: darkred;
+      font-weight: 600;
+      margin-bottom:12px;
+    }
+
+    .list-box {
+      background:var(--bg);
+      padding:12px;
+      border-radius:8px;
+      font-family: monospace;
+    }
+
+    .line-row {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding:6px 8px;
+      border-radius:6px;
+      margin-bottom:4px;
+      transition: background 0.3s ease;
+    }
+
+    .line-row:nth-child(odd){
+      background:rgba(0,0,0,0.02);
+    }
+
+    /* Highlight copied line */
+    .line-row.copied {
+      background: var(--success-bg);
+      color: var(--success-text);
+    }
+    
+    .line-text {
+      flex:1;
+      word-break:break-all;
+    }
+
+    button {
+      background:var(--accent);
+      color:white;
+      border:0;
+      padding:6px 10px;
+      border-radius:6px;
+      cursor:pointer;
+      font-weight:600;
+      font-size:0.85rem;
+    }
+
+    button.copied-btn {
+      background: var(--success-text);
+    }
+
+    @media (max-width:520px){
+      body{margin:12px}
+      header{flex-direction:column;align-items:flex-start}
+    }
+  </style>
+</head>
+
+<body>
+
+<header>
+  <div>
+    <h1>List of V2Ray Subscriptions</h1>
+  </div>
+</header>
+
+
+<details>
+  <summary><strong>Selected VMESS</strong></summary>
+    <div class="meta">
+      vmess: <strong>{{ vmess|length }}</strong> lines
+    </div>
+  <div class="list-box" id="vmessBox">
+    {% for line in vmess -%}
+    <div class="line-row">
+      <span class="line-text">{{ line | e }}</span>
+      <button class="copy-btn">Copy</button>
+    </div>
+    {% endfor -%}
+  </div>
+</details>
+
+<details>
+  <summary><strong>Selected VLESS</strong></summary>
+    <div class="meta">
+      vless: <strong>{{ vless|length }}</strong> lines
+    </div>
+  <div class="list-box" id="vlessBox">
+    {% for line in vless -%}
+    <div class="line-row">
+      <span class="line-text">{{ line | e }}</span>
+      <button class="copy-btn">Copy</button>
+    </div>
+    {% endfor -%}
+  </div>
+</details>
+
+<details>
+  <summary><strong>Selected TROJAN</strong></summary>
+    <div class="meta">
+      trojan: <strong>{{ trojan|length }}</strong> lines
+    </div>
+  <div class="list-box" id="trojanBox">
+    {% for line in trojan -%}
+    <div class="line-row">
+      <span class="line-text">{{ line | e }}</span>
+      <button class="copy-btn">Copy</button>
+    </div>
+    {% endfor -%}
+  </div>
+</details>
+
+<hr style="margin:20px 0; border:none; border-top:1px solid rgba(0,0,0,0.1);" />
+
+<details>
+  <summary><strong>What are the protocols?</strong></summary>
+
+  <div style="margin-top:10px; line-height:1.6;">
+
+    <p><strong>🔹 VMess</strong><br>
+    Encrypted protocol using a UUID. Flexible (WS, TCP, gRPC). Good compatibility.</p>
+
+    <p><strong>🔹 VLESS</strong><br>
+    Lightweight and modern. Uses TLS for encryption. Faster and recommended.</p>
+    
+    <p><strong>🔹 Trojan</strong><br>
+    Looks like normal HTTPS traffic. Password-based. Very stealthy.</p>
+
+  </div>
+</details>
+
+<p>Developed by Momo</p>
+
+<script>
+  // attach to each box by its id
+  ['vmessBox','vlessBox','trojanBox'].forEach(id => {
+    const box = document.getElementById(id);
+    if (!box) return;
+    box.addEventListener('click', async function(e) {
+      if (!e.target.classList.contains('copy-btn')) return;
+      const row = e.target.closest('.line-row');
+      const text = row.querySelector('.line-text').innerText.trim();
+      try {
+        await navigator.clipboard.writeText(text);
+        e.target.textContent = "Copied ✓";
+        e.target.classList.add("copied-btn");
+        row.classList.add("copied");
+      } catch (err) {
+        alert("Clipboard copy failed. Use HTTPS or localhost.");
+      }
+    });
+  });
+</script>
+
+</body>
+</html>

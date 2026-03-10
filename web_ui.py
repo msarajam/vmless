@@ -1,5 +1,5 @@
 # web_ui.py
-from flask import Flask, Response, render_template_string
+from flask import Flask, Response, render_template
 from typing import List, Dict
 import io
 import contextlib
@@ -8,14 +8,21 @@ import subprocess
 import random
 import sys
 import base64, json, urllib.parse
+import glob
+import base64
+import json
+import re
+import uuid
+import ipaddress
+from urllib.parse import urlparse, parse_qs, unquote
 
 # ---------------- CONFIG ----------------
 REPO_URL = "https://github.com/Epodonios/v2ray-configs.git"
 BRANCH = "main"
 LOCAL_REPO_PATH = "./vpn_repo"
-TARGET_SUBDIR = "Splitted-By-Protocol"
-FILENAME = "vmess.txt"
-SCHEME = "vmess://"
+DOMAIN_RE = re.compile(
+    r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(?:\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*\.?$"
+)
 # ----------------------------------------
 
 app = Flask(__name__)
@@ -42,275 +49,251 @@ def run_command(command, cwd=None):
             capture_output=True,
             text=True
             )
-    print(command, cwd)
-    print("Output:", result.stdout)
     if result.returncode != 0:
-        print("Error:", result.stderr)
         raise Exception(f"Command failed ({command}): {result.stderr.strip()}")
     return result.stdout.strip()
 
+def combineAll():
+    pattern = LOCAL_REPO_PATH+"/Sub*.txt"
+    output_file = "SubAll.txt"
+    files = glob.glob(pattern)
+    files = [f for f in files if os.path.basename(f) != output_file]
+    files.sort()
+    
+    with open(output_file, "w", encoding="utf-8") as outfile:
+        for filename in files:
+            with open(filename, "r", encoding="utf-8") as infile:
+                outfile.write(infile.read())
+                outfile.write("\n")  # Optional: add newline between files
+
+def remove_duplicates():
+    # check if SubDone.txt exists, if not create it
+    if not os.path.exists("SubDone.txt"):
+        open("SubDone.txt", "w", encoding="utf-8").close()
+    # Read FileBB into a set (fast lookup)
+    with open("SubDone.txt", "r", encoding="utf-8") as f:
+        bb_lines = set(line.strip() for line in f)
+    
+    # Keep only lines not in FileBB
+    with open("SubAll.txt", "r", encoding="utf-8") as f:
+        aa_lines = f.readlines()
+    
+    filtered_lines = [
+        line for line in aa_lines
+        if line.strip() not in bb_lines
+    ]
+    
+    # Overwrite FileAA
+    with open("SubAll.txt", "w", encoding="utf-8") as f:
+        f.writelines(filtered_lines)
+
 def clone_or_pull_repo():
     if not os.path.exists(LOCAL_REPO_PATH):
-        print("Cloning repository...")
         run_command(f"git clone --depth 1 -b {BRANCH} {REPO_URL} {LOCAL_REPO_PATH}")
     else:
-        print("Pulling latest changes...")
         run_command("git fetch", cwd=LOCAL_REPO_PATH)
         run_command(f"git checkout {BRANCH}", cwd=LOCAL_REPO_PATH)
         run_command("git pull", cwd=LOCAL_REPO_PATH)
-
-def list_files_in_repo():
-    target_path = os.path.join(LOCAL_REPO_PATH, TARGET_SUBDIR)
-    file_path = os.path.join(target_path, FILENAME)
-
-    if os.path.isfile(file_path):
-        print(f"{FILENAME} exists at: {file_path}")
-    else:
-        print(f"{FILENAME} not found in {target_path}")
+    combineAll()
+    remove_duplicates()
 
 def read_lines(path: str) -> List[str]:
     with open(path, "r", encoding="utf-8") as f:
         return [ln.strip() for ln in f if ln.strip()]
 
-def group_by_first_4_after_scheme(lines: List[str]) -> Dict[str, List[str]]:
+def group_by_first_4_after_scheme(lines: List[str],scheme: str="") -> Dict[str, List[str]]:
     groups: Dict[str, List[str]] = {}
     for line in lines:
-        if line.lower().startswith(SCHEME):
-            body = line[len(SCHEME):]
+        if line.lower().startswith(scheme):
+            body = line[len(scheme):]
         else:
-            body = line
-
-        key = body[:4] if len(body) >= 4 else body
+            continue
+        key = body[:6] if len(body) >= 6 else body
         groups.setdefault(key, []).append(line)
 
     return groups
 
-def decode_vmess(uri: str) -> dict:
+
+def is_valid_uuid(val: str) -> bool:
     try:
-        assert uri.startswith("vmess://")
-        b64 = uri[len("vmess://"):]
-        # some implementations use URL-safe base64 or omit padding
-        b64 = b64.replace('-', '+').replace('_', '/')
-        # pad
-        padding = (-len(b64)) % 4
-        b64 += "=" * padding
-        raw = base64.b64decode(b64)
+        uuid.UUID(val)
+        return True
+    except Exception:
+        return False
+
+def is_valid_host(host: str) -> bool:
+    if not host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except Exception:
+        pass
+    if host.startswith('[') and host.endswith(']'):
         try:
-            j = json.loads(raw.decode('utf-8'))
-            return j
+            ipaddress.ip_address(host[1:-1])
+            return True
         except Exception:
-            return None
-    except Exception as e:   
-        return None
+            pass
+    return bool(DOMAIN_RE.match(host))
 
-def pick_random_unique_groups(count: int = 15):
-    file_path = os.path.join(LOCAL_REPO_PATH, TARGET_SUBDIR, FILENAME)
+def is_valid_port(port_str: str) -> bool:
+    try:
+        p = int(port_str)
+        return 1 <= p <= 65535
+    except Exception:
+        return False
 
-    if not os.path.isfile(file_path):
-        raise Exception(f"File not found: {file_path}")
+def decode_base64_padded(data: str) -> bytes:
+    data = data.strip()
+    data = data.replace('-', '+').replace('_', '/')
+    padding = len(data) % 4
+    if padding:
+        data += '=' * (4 - padding)
+    return base64.b64decode(data)
 
-    lines = read_lines(file_path)
-    groups = group_by_first_4_after_scheme(lines)
+def validate_vmess(uri: str):
+    parsed = urlparse(uri)
+    payload = uri[len("vmess://"):] if uri.startswith("vmess://") else parsed.path
+    payload = payload.split('#', 1)[0]
+    payload = payload.strip()
+    if not payload:
+        return False, "empty vmess payload"
+    try:
+        raw = decode_base64_padded(payload)
+    except Exception as e:
+        return False, f"base64 decode failed: {e}"
+    try:
+        j = json.loads(raw.decode('utf-8', errors='replace'))
+    except Exception as e:
+        return False, f"json parse failed: {e}"
+    if not isinstance(j, dict):
+        return False, "decoded vmess payload not an object"
+    required = ['add', 'port', 'id']
+    missing = [k for k in required if k not in j or j[k] in (None, '')]
+    if missing:
+        return False, f"missing fields: {', '.join(missing)}"
+    if not is_valid_host(str(j['add'])):
+        return False, f"invalid host in 'add': {j['add']}"
+    if not is_valid_port(str(j['port'])):
+        return False, f"invalid port in 'port': {j['port']}"
+    if not is_valid_uuid(str(j['id'])):
+        return False, f"'id' is not a valid UUID: {j['id']}"
+    return True, "ok"
 
+def validate_vless(uri: str):
+    parsed = urlparse(uri)
+    if parsed.scheme.lower() != 'vless':
+        return False, "scheme not vless"
+    user = parsed.username  # uuid
+    host = parsed.hostname
+    port = parsed.port
+    if not user or not is_valid_uuid(user):
+        return False, "missing or invalid UUID (username part)"
+    if not host or not is_valid_host(host):
+        return False, "missing or invalid host"
+    if port is None:
+        return False, "missing port"
+    if not is_valid_port(str(port)):
+        return False, "invalid port"
+    return True, "ok"
+
+def validate_trojan(uri: str):
+    # trojan://password@host:port?params#name
+    parsed = urlparse(uri)
+    if parsed.scheme.lower() != 'trojan':
+        return False, "scheme not trojan"
+    pwd = parsed.username  # password/token is placed as username in many trojan URIs
+    host = parsed.hostname
+    port = parsed.port
+    if not pwd:
+        return False, "missing password/token (username part)"
+    if not host or not is_valid_host(host):
+        return False, "missing or invalid host"
+    if port is None:
+        return False, "missing port"
+    if not is_valid_port(str(port)):
+        return False, "invalid port"
+    return True, "ok"
+
+def pick_random_unique_groups(filename: str ="",scheme: str ="",  count: int = 15):
+    if not os.path.isfile(filename):
+        raise Exception(f"File not found: {filename}")
+    lines = read_lines(filename)
+    groups = group_by_first_4_after_scheme(lines,scheme)
     selected = []
-
     group_keys = list(groups.keys())
     random.shuffle(group_keys)
-
     for key in group_keys:
         group_size = len(groups[key])
-        
-        if group_size < 5:
-            continue
         thresholds = [
-            (10, 1),
-            (50, 2),
+            (2, 1),
+            (10, 2),
             (100, 3),
             (300, 5),
         ]
-        
         num_to_add = sum(amount for limit, amount in thresholds if group_size > limit)
         
         for _ in range(num_to_add):
             if len(selected) >= count:
                 break
             checkLine = random.choice(groups[key])
-            dLine = decode_vmess(checkLine)
-            if dLine == None:
-                continue
+            if scheme == "vmess://":
+                valid, msg = validate_vmess(checkLine)
+                if not valid:
+                    continue
+            elif scheme == "vless://":
+                valid, msg = validate_vless(checkLine)
+                if not valid:
+                    continue
+            elif scheme == "trojan://":
+                valid, msg = validate_trojan(checkLine)
+                if not valid:
+                    continue
             selected.append(checkLine)
-
-        
     return selected
-
-# Simple HTML template — print captured output and the selected lines
-HTML = """
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Momo for Babak</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-
-  <style>
-    :root{
-      --bg:#f6f8fa;
-      --muted:#6b7280;
-      --accent:#0ea5a4;
-      --success-bg:#dcfce7;
-      --success-text:#166534;
-    }
-
-    body {
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial;
-      margin: 20px;
-      color:#111827;
-    }
-
-    header {
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:12px;
-      margin-bottom:16px;
-    }
-
-    h1{ font-size:1.25rem; margin:0; }
-
-    .meta{
-      color:var(--muted);
-      font-size:0.95rem;
-    }
-
-    .error {
-      color: darkred;
-      font-weight: 600;
-      margin-bottom:12px;
-    }
-
-    .list-box {
-      background:var(--bg);
-      padding:12px;
-      border-radius:8px;
-      font-family: monospace;
-    }
-
-    .line-row {
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:10px;
-      padding:6px 8px;
-      border-radius:6px;
-      margin-bottom:4px;
-      transition: background 0.3s ease;
-    }
-
-    .line-row:nth-child(odd){
-      background:rgba(0,0,0,0.02);
-    }
-
-    /* Highlight copied line */
-    .line-row.copied {
-      background: var(--success-bg);
-      color: var(--success-text);
-    }
-
-    .line-text {
-      flex:1;
-      word-break:break-all;
-    }
-
-    button {
-      background:var(--accent);
-      color:white;
-      border:0;
-      padding:6px 10px;
-      border-radius:6px;
-      cursor:pointer;
-      font-weight:600;
-      font-size:0.85rem;
-    }
-
-    button.copied-btn {
-      background: var(--success-text);
-    }
-
-    @media (max-width:520px){
-      body{margin:12px}
-      header{flex-direction:column;align-items:flex-start}
-    }
-  </style>
-</head>
-
-<body>
-
-<header>
-  <div>
-    <h1>List of vmess</h1>
-    <div class="meta">
-      Selected: <strong>{{ selected|length }}</strong> lines
-    </div>
-  </div>
-</header>
-
-{% if error %}
-  <div class="error">Error: {{ error }}</div>
-{% endif %}
-
-<h2 style="margin:12px 0 8px 0; font-size:1rem;">Selected lines</h2>
-
-<div class="list-box" id="selectedBox">
-  {% for line in selected -%}
-  <div class="line-row">
-    <span class="line-text">{{ line | e }}</span>
-    <button class="copy-btn">Copy</button>
-  </div>
-  {% endfor -%}
-</div>
-
-<script>
-  document.getElementById('selectedBox').addEventListener('click', async function(e) {
-
-    if (!e.target.classList.contains('copy-btn')) return;
-
-    const row = e.target.closest('.line-row');
-    const text = row.querySelector('.line-text').innerText.trim();
-
-    try {
-      await navigator.clipboard.writeText(text);
-
-      // Change button text permanently
-      e.target.textContent = "Copied ✓";
-      e.target.classList.add("copied-btn");
-
-      // Highlight copied line
-      row.classList.add("copied");
-
-    } catch (err) {
-      alert("Clipboard copy failed. Use HTTPS or localhost.");
-    }
-
-  });
-</script>
-
-</body>
-</html>
-"""
 
 @app.route("/")
 def index():
+    clone_or_pull_repo()
+
     buf = io.StringIO()
-    selected = []
+    vmess = []
+    vless = []
+    trojan = []
+    
     error_msg = None
 
-    # capture all prints from the functions so they show up in the web UI
+    # vmess
     try:
         tee = Tee(sys.stdout, buf)
         with contextlib.redirect_stdout(tee):
-            clone_or_pull_repo()
-            list_files_in_repo()
-            selected = pick_random_unique_groups(15)
+            file_path = os.path.join( "./", "SubAll.txt")
+            vmess = pick_random_unique_groups(file_path,"vmess://",15)
+    except Exception as e:
+        tee = Tee(sys.stdout, buf)
+        with contextlib.redirect_stdout(tee):
+            print("Exception while running:", e)
+        error_msg = str(e)
+    
+    # vless
+    try:
+        tee = Tee(sys.stdout, buf)
+        with contextlib.redirect_stdout(tee):
+            file_path = os.path.join( "./", "SubAll.txt")
+            vless = pick_random_unique_groups(file_path,"vless://",15)
+    except Exception as e:
+        tee = Tee(sys.stdout, buf)
+        with contextlib.redirect_stdout(tee):
+            print("Exception while running:", e)
+        error_msg = str(e)
+
+    # trojan
+    try:
+        tee = Tee(sys.stdout, buf)
+        with contextlib.redirect_stdout(tee):
+            file_path = os.path.join( "./", "SubAll.txt")
+            trojan = pick_random_unique_groups(file_path,"trojan://",15)
     except Exception as e:
         tee = Tee(sys.stdout, buf)
         with contextlib.redirect_stdout(tee):
@@ -318,8 +301,18 @@ def index():
         error_msg = str(e)
 
     stdout_contents = buf.getvalue()
-    return render_template_string(HTML, stdout=stdout_contents, selected=selected, error=error_msg)
+
+
+
+    # create a file and add all of these to it
+    output_file = "SubDone.txt"
+    outfile = os.path.join("./", output_file)
+    outfile = [f for f in outfile if os.path.basename(f) != output_file]
+    with open(output_file, "a", encoding="utf-8") as outfile:
+        for line in vmess + vless + trojan:
+            outfile.write(line + "\n")
+
+    return render_template("index.html", stdout=stdout_contents, vmess=vmess , vless=vless, trojan=trojan, error=error_msg)
 
 if __name__ == "__main__":
-    # run on 0.0.0.0 so you can access it from other devices if needed; set debug=False for production
     app.run(host="0.0.0.0", port=9090, debug=True)
