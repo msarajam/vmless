@@ -25,7 +25,7 @@ LOCAL_REPO_PATH = "./vpn_repo"
 DOMAIN_RE = re.compile(
     r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(?:\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*\.?$"
 )
-_cooldown_seconds = 60  # change to whatever
+_cooldown_seconds = 600  # change to whatever
 _lock = threading.Lock()
 _last_clone = 0.0
 
