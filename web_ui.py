@@ -326,20 +326,7 @@ def index():
             print("Exception while running: vless", e)
         error_msg = str(e)
 
-    # trojan
-    try:
-        tee = Tee(sys.stdout, buf)
-        with contextlib.redirect_stdout(tee):
-            file_path = os.path.join( "./", "SubAll.txt")
-            trojan = pick_random_unique_groups(file_path,"trojan://",15)
-    except Exception as e:
-        tee = Tee(sys.stdout, buf)
-        with contextlib.redirect_stdout(tee):
-            print("Exception while running trojan:", e)
-        error_msg = str(e)
-
     stdout_contents = buf.getvalue()
-
 
 
     # create a file and add all of these to it
@@ -347,10 +334,10 @@ def index():
     outfile = os.path.join("./", output_file)
     outfile = [f for f in outfile if os.path.basename(f) != output_file]
     with open(output_file, "a", encoding="utf-8") as outfile:
-        for line in vmess + vless + trojan:
+        for line in vmess + vless:
             outfile.write(line + "\n")
 
-    return render_template("index.html", stdout=stdout_contents, vmess=vmess , vless=vless, trojan=trojan, error=error_msg)
+    return render_template("index.html", stdout=stdout_contents, vmess=vmess , vless=vless, error=error_msg)
 
 if __name__ == "__main__":
     clone_or_pull_repo()   
