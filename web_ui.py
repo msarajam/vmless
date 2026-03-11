@@ -25,7 +25,7 @@ LOCAL_REPO_PATH = "./vpn_repo"
 DOMAIN_RE = re.compile(
     r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(?:\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*\.?$"
 )
-_cooldown_seconds = 500  # change to whatever
+_cooldown_seconds = 60  # change to whatever
 _lock = threading.Lock()
 _last_clone = 0.0
 
@@ -75,7 +75,8 @@ def combineAll():
 def remove_duplicates():
     # check if SubDone.txt exists, if not create it
     if not os.path.exists("SubDone.txt"):
-        open("SubDone.txt", "w", encoding="utf-8").close()
+        open("SubDone.txt", "w", encoding="utf-8").close() 
+        return
     # Read FileBB into a set (fast lookup)
     with open("SubDone.txt", "r", encoding="utf-8") as f:
         bb_lines = set(line.strip() for line in f)
@@ -87,14 +88,18 @@ def remove_duplicates():
     with open("SubAll.txt", "r", encoding="utf-8") as f:
         aa_lines = f.readlines()
     
+    print(f"MOMO \n\tbb {len(bb_lines)}\n\taa {len(aa_lines)}\n\ta2 {len(aa_lines)/20}")
+
+    if len(bb_lines)>(len(aa_lines)/20):
+        os.remove("SubDone.txt")
+        print("\tRemoved temp file")
+        return
+
     filtered_lines = [
         line for line in aa_lines
         if line.strip() not in bb_lines
     ]
-    print(f"Removed {len(aa_lines) - len(filtered_lines)} duplicates, {len(filtered_lines)} lines remain.")
-    if (len(aa_lines) - len(filtered_lines)) > (len(filtered_lines)/2):
-        # remove SubDone.txt
-        os.remove("SubDone.txt")
+    print(f"\tRemoved {len(aa_lines) - len(filtered_lines)} duplicates, {len(filtered_lines)} lines remain.")
     # Overwrite FileAA
     with open("SubAll.txt", "w", encoding="utf-8") as f:
         f.writelines(filtered_lines)
@@ -262,31 +267,34 @@ def pick_random_unique_groups(filename: str ="",scheme: str ="",  count: int = 1
             (300, 5),
         ]
         num_to_add = sum(amount for limit, amount in thresholds if group_size > limit)
-        
-        for _ in range(num_to_add):
-            if len(selected) >= count:
-                break
-            checkLine = random.choice(groups[key])
-            if scheme == "vmess://":
-                valid, msg = validate_vmess(checkLine)
-                if not valid:
-                    continue
-            elif scheme == "vless://":
-                valid, msg = validate_vless(checkLine)
-                if not valid:
-                    continue
-            elif scheme == "trojan://":
-                valid, msg = validate_trojan(checkLine)
-                if not valid:
-                    continue
-            selected.append(checkLine)
+        try:
+            for _ in range(num_to_add):
+                if len(selected) >= count:
+                    break
+                msg=""
+                checkLine = random.choice(groups[key])
+                if scheme == "vmess://":
+                    valid, msg = validate_vmess(checkLine)
+                    if not valid:
+                        continue
+                elif scheme == "vless://":
+                    valid, msg = validate_vless(checkLine)
+                    if not valid:
+                        continue
+                elif scheme == "trojan://":
+                    valid, msg = validate_trojan(checkLine)
+                    if not valid:
+                        continue
+                selected.append(checkLine)
+        except Exception as e:
+            print(f"MOMO some Error \n{checkLine}\n{msg}\n{e}")
+            continue
     return selected
 
 @app.route("/")
 def index():
     clone_or_pull_repo()   
     remove_duplicates()
-
     buf = io.StringIO()
     vmess = []
     vless = []
@@ -303,7 +311,7 @@ def index():
     except Exception as e:
         tee = Tee(sys.stdout, buf)
         with contextlib.redirect_stdout(tee):
-            print("Exception while running:", e)
+            print("Exception while running vmess:", e)
         error_msg = str(e)
     
     # vless
@@ -315,7 +323,7 @@ def index():
     except Exception as e:
         tee = Tee(sys.stdout, buf)
         with contextlib.redirect_stdout(tee):
-            print("Exception while running:", e)
+            print("Exception while running: vless", e)
         error_msg = str(e)
 
     # trojan
@@ -327,7 +335,7 @@ def index():
     except Exception as e:
         tee = Tee(sys.stdout, buf)
         with contextlib.redirect_stdout(tee):
-            print("Exception while running:", e)
+            print("Exception while running trojan:", e)
         error_msg = str(e)
 
     stdout_contents = buf.getvalue()
